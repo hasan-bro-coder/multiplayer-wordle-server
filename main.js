@@ -1,58 +1,102 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import cors from 'cors';
 
 const app = express();
+app.use(cors());
 const server = createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
 // Store lobbies and players
 const lobbies = new Map(); // Key: lobbyId, Value: { players: [socketId1, socketId2], word: string }
-let lastLobbyId = null
+let lastLobbyId = null;
+
 // Generate a unique lobby ID
 function generateLobbyId() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+app.get('/', (req, res) => {
+  res.send('online');
+})
+
 io.on('connection', (socket) => {
   console.log(`Player connected: ${socket.id}`);
-  socket.on('join', (word, id) => {
-    // const lastLobbyId = Array.from(lobbies.keys()).pop();
-    let lastId = id || lastLobbyId
-    if (lastId && lobbies.get(lastId)?.players.length == 1) {
-      lobbies.get(lastId).players.push(socket.id);
-      socket.join(lastId);
-      io.to(socket.id).emit('joined', lastId, false, lobbies.get(lastId).word);
-      io.to(lobbies.get(lastId).players[0]).emit('lobbyJoined');
 
-      console.log('joiner');
-    } else {
-      let ids = id || generateLobbyId();
-      lobbies.set(ids, { players: [socket.id], word: word });
-      socket.join(ids);
-      lastLobbyId = ids;
-      io.to(socket.id).emit('joined', lastLobbyId, true);
-      console.log('host');
+  socket.on('join', (word, id) => {
+    try {
+      let lastId = id || lastLobbyId;
+      if (lastId && lobbies.get(lastId)?.players.length === 1) {
+        lobbies.get(lastId).players.push(socket.id);
+        socket.join(lastId);
+        io.to(socket.id).emit('joined', lastId, false, lobbies.get(lastId).word);
+        io.to(lobbies.get(lastId).players[0]).emit('lobbyJoined');
+        console.log('joiner');
+      } else {
+        let ids = id || generateLobbyId();
+        lobbies.set(ids, { players: [socket.id], word: word });
+        socket.join(ids);
+        lastLobbyId = ids;
+        io.to(socket.id).emit('joined', lastLobbyId, true);
+        console.log('host');
+      }
+    } catch (error) {
+      console.error('Error joining lobby:', error);
+      io.to(socket.id).emit('error', 'Error joining lobby');
     }
-    console.log('Player joined game room');
-  })
+  });
+
   socket.on('line', (lobbyId, socketId, word, row) => {
-    lobbies.get(lobbyId).players.forEach(player => {
-      console.log(player, socketId, word);
-      if (player != socketId) {
-        io.to(player).emit('moveMade', word, row);
+    try {
+      if (!lobbies.get(lobbyId)) {
+        throw new Error('Lobby not found');
       }
-    })
-  })
-  socket.on('gaveup', (lobbyId,socketId) => {
-    console.log('gaveup')
-    lobbies.get(lobbyId).players.forEach(player => {
-      if (player != socketId) {
-        io.to(player).emit('opponentGaveUp');
-        lobbies.delete(lobbyId);
+      lobbies.get(lobbyId).players.forEach(player => {
+        if (player !== socketId) {
+          io.to(player).emit('moveMade', word, row);
+        }
+      });
+    } catch (error) {
+      console.error('Error sending move:', error);
+      io.to(socket.id).emit('error', 'Error sending move');
+    }
+  });
+
+  socket.on('gameend', (lobbyId) => {
+    try {
+      if (!lobbies.get(lobbyId)) {
+        throw new Error('Lobby not found');
       }
-    })
-  })
+      lobbies.delete(lobbyId);
+    } catch (error) {
+      console.error('Error ending game:', error);
+      io.to(socket.id).emit('error', 'Error ending game');
+    }
+  });
+
+  socket.on('gaveup', (lobbyId, socketId) => {
+    try {
+      if (!lobbies.get(lobbyId)) {
+        throw new Error('Lobby not found');
+      }
+      lobbies.get(lobbyId).players.forEach(player => {
+        if (player !== socketId) {
+          io.to(player).emit('opponentGaveUp');
+          lobbies.delete(lobbyId);
+        }
+      });
+    } catch (error) {
+      console.error('Error giving up:', error);
+      io.to(socket.id).emit('error', 'Error giving up');
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log(`Player disconnected: ${socket.id}`);
     // Clean up lobbies when a player disconnects
@@ -75,3 +119,4 @@ const PORT = 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
