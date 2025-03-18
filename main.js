@@ -23,7 +23,9 @@ function generateLobbyId() {
 }
 
 app.get('/', (req, res) => {
-  res.send('online');
+  let data = JSON.stringify([...lobbies.entries()].reduce((obj, [key, value]) => (obj[key] = value, obj), {}))
+  console.log(data);
+  res.send(data);
 })
 
 io.on('connection', (socket) => {
@@ -38,13 +40,15 @@ io.on('connection', (socket) => {
         io.to(socket.id).emit('joined', lastId, false, lobbies.get(lastId).word);
         io.to(lobbies.get(lastId).players[0]).emit('lobbyJoined');
         console.log('joiner');
-      } else {
+      } else if(lobbies.get(lastId) == null) {
         let ids = id || generateLobbyId();
         lobbies.set(ids, { players: [socket.id], word: word });
         socket.join(ids);
-        lastLobbyId = ids;
+        if (!id) lastLobbyId = ids;
         io.to(socket.id).emit('joined', lastLobbyId, true);
         console.log('host');
+      }else{
+        io.to(socket.id).emit('error', 'Lobby is full');
       }
     } catch (error) {
       console.error('Error joining lobby:', error);
@@ -63,7 +67,7 @@ io.on('connection', (socket) => {
         }
       });
     } catch (error) {
-      console.error('Error sending move:', error);
+      console.error('Error sending move:', error,lobbyId, socketId, word, row);
       io.to(socket.id).emit('error', 'Error sending move');
     }
   });
@@ -93,7 +97,7 @@ io.on('connection', (socket) => {
       });
     } catch (error) {
       console.error('Error giving up:', error);
-      io.to(socket.id).emit('error', 'Error giving up');
+      io.to(socket.id).emit('error', 'Error giving up: ' + error);
     }
   });
 
